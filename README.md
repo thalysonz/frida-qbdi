@@ -12,7 +12,6 @@ Template Frida QBDI native function loader
 
 The example in the template uses qbdi to return the syscalls made, and using the syscall number we try to obtain the function.
 
-
     function myCallback(vm, gprState, fprState, data) {
         //console.log("Callback executed");
         const syscallNumber = gprState.getRegister("x8");
@@ -26,3 +25,4 @@ The example in the template uses qbdi to return the syscalls made, and using the
         console.log("0x" + analysis.address.toString(16)+ " " + analysis.disassembly + ' Syscall: ' + sysStr);
         return VMAction.CONTINUE;
     }
+![frida-qbdi.png](https://github.com/thalysonz/frida-qbdi/blob/main/frida-qbdi.png)
