@@ -327,10 +327,7 @@ const syscallLookup = {
         console.log("[+] Executing " + funcSym + "(" + javavm + ", " + reserved + ") through QBDI...");
         vm.call(funcPtr, [javavm, reserved]);
         var retVal = state.getRegister(); 
-        console.log("[+] " + funcSym + "() returned " + retVal);    
-        if (postSync) {
-            state.synchronizeContext(ctx, SyncDirection.QBDI_TO_FRIDA);
-        }
+        console.log("[+] " + funcSym + "() returned " + retVal); 
         //return   
         return retVal;
     } catch (err) {
