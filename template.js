@@ -1,5 +1,25 @@
 import { VM, InstPosition, VMAction, SyncDirection, AnalysisType} from "./frida-qbdi.js";
 
+const memcpyAddr = Module.findExportByName("libc.so", "memcpy");
+if (memcpyAddr === null) {
+    throw new Error("memcpy not found in libc");
+}
+
+// Declare o prototype do memcpy
+
+const memcpy = new NativeFunction(memcpyAddr, 'pointer', ['pointer', 'pointer', 'size_t']);
+
+// Função para copiar memória usando memcpy
+function copyMemory(dest, src, size) {
+    // Converta os endereços para NativePointer
+    const destPtr = new NativePointer(dest);
+    const srcPtr = new NativePointer(src);
+    const sizeVal = new UInt64(size);
+    
+    // Chame a função memcpy
+    return memcpy(destPtr, srcPtr, sizeVal);
+}
+
 // Inicializa a VM do QBDI
 function QBI(ctx, funcPtr, funcSym, args, postSync){
     var vm = new VM();
@@ -11,7 +31,7 @@ function QBI(ctx, funcPtr, funcSym, args, postSync){
 
     state.synchronizeContext(ctx, SyncDirection.FRIDA_TO_QBDI);
     var stack = vm.allocateVirtualStack(state, 0x10000); 
-    vm.addInstrumentedModuleFromAddr(funcPtr);
+    vm.addInstrumentedModuleFromAddr(funcPtr)
     //console.log(module)  
     
 // Tabela de mapeamento de números de syscall para nomes de funções // aarch64
@@ -304,19 +324,84 @@ const syscallLookup = {
             return VMAction.CONTINUE;
         }
         const analysis = vm.getInstAnalysis(AnalysisType.ANALYSIS_INSTRUCTION || AnalysisType.ANALYSIS_DISASSEMBLY )
+        
+        const syscallName = syscallLookup[parseInt(syscallNumber.toString())];
+            //if(syscallLookup[parseInt(syscallNumber.toString())]){
+        
+            //}
+
+        
+            
+            if(syscallName == "read"){
+               
+                let charBuf = gprState.getRegister("x1");
+                if(charBuf.toString().indexOf("frida") != -1){
+                    let buff = Memory.readCString(gprState.getRegister("x1"));
+                    buff = buff.replaceAll("/data/local/tmp/re.frida.server/frida-agent-64.so", "anon_inode:[eventfd]");
+                    buff = buff.replaceAll("re.frida.server", "anon_inode:[eventfd]");
+                    buff = buff.replaceAll("frida-agent-64.so", "anon_inode:[eventfd]");
+                    buff = buff.replaceAll("frida-agent-32.so", "anon_inode:[eventfd]");
+                    gprState.getRegister("x1").writeUtf8String(buff);
+                    
+                    //copyMemory(gprState.getRegister("x1"), tempBuff, tempBuff.toString().length +1);
+                }
+                return VMAction.CONTINUE;
+            }
+            if (syscallName == "newfstatat") {
+                let pathPtr = gprState.getRegister("x1");
+                let path = Memory.readCString(pathPtr);
+        
+                console.log("[*] Function newfstatat open file: ", path);
+        
+                if (path === "/sys/fs/selinux/enforce") {
+                    // Alterar o buffer de saída para simular um estado permissivo
+                    let statbufPtr = gprState.getRegister("x2");
+                    
+                    // Estrutura stat: modificar o campo st_mode para 0 (indicar permissivo)
+                    Memory.writeU32(statbufPtr.add(0x0), 0);  // Dependendo da estrutura stat, ajuste o offset corretamente
+                    
+                    // Definir o valor de retorno para 0 (sucesso)
+                    gprState.setRegister("x0", 0);
+                }
+        
+                return VMAction.CONTINUE;
+            }
+            if(syscallName == "openat"){
+                let buff2 = Memory.readCString(gprState.getRegister("x1"));
+                console.log("[*] Function openat open file: ", buff2);
+                
+
+                return VMAction.CONTINUE;
+            }
+            else{
+                console.log(syscallLookup[parseInt(syscallNumber.toString())])
+            }
 
         //retorna a function referente ao numero da syscall
-        const sysStr = syscallLookup[parseInt(syscallNumber.toString())] || "unknown_syscall";
+        //const sysStr = syscallLookup[parseInt(syscallNumber.toString())] || "unknown_syscall";
       
-        console.log("0x" + analysis.address.toString(16)+ " " + analysis.disassembly + ' Syscall: ' + sysStr);
+        //console.log("0x" + analysis.address.toString(16)+ " " + analysis.disassembly + ' Syscall: ' + sysStr);
+        return VMAction.CONTINUE;
+    }
+
+    function myCallbackOpenFunction(vm, gprState, fprState, data) {
+
+        console.log("code callback")
         return VMAction.CONTINUE;
     }
     
     // Cria um callback nativo
     const callback = vm.newInstCallback(myCallback);
+
+    const openCallback = vm.newInstCallback(myCallbackOpenFunction);
     
     // Adiciona o callback para o mnemônico "SVC"
     vm.addMnemonicCB("SVC",InstPosition.POSTINST, callback, null, 1);
+
+    const faccessatPtr = Module.findExportByName(null, "stat");
+    const accessPtr = Module.findExportByName(null, "fopen");
+    vm.addCodeAddrCB(accessPtr, InstPosition.POSTINST, openCallback, 1);
+    vm.addCodeAddrCB(faccessatPtr, InstPosition.POSTINST, openCallback, 1);
     
     console.log("Callback added, starting VM run.");
     try {
@@ -325,8 +410,8 @@ const syscallLookup = {
         const javavm = ptr(args[0]);
         const reserved = ptr(args[1]);
         console.log("[+] Executing " + funcSym + "(" + javavm + ", " + reserved + ") through QBDI...");
-        vm.call(funcPtr, [javavm, reserved]);
-        var retVal = state.getRegister(); 
+        
+        var retVal = vm.call(funcPtr, [javavm, reserved]); 
         console.log("[+] " + funcSym + "() returned " + retVal); 
         //return   
         return retVal;
@@ -369,6 +454,8 @@ function waitForLibLoading(libraryName)
         }
     });
 }
+
+
 function processJniOnLoad(libraryName) 
 {
     const funcSym = "JNI_OnLoad";
@@ -387,8 +474,9 @@ function processJniOnLoad(libraryName)
         Interceptor.flush(); 
        
         var retval = QBI(this.context, funcPtr, funcSym, [vm, reserved], true);
+        //QBI2()
         processJniOnLoad(libraryName, funcSym);
-        return retVal;
-    }, "long", ["pointer", "pointer"]));
+        return ptr(retval);
+    }, "pointer", ["pointer", "pointer"]));
 
 }
